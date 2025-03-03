@@ -85,7 +85,7 @@ if __name__ == "__main__":
 
     for _ in range(1):
 
-        log_dir = os.path.dirname(__file__) + "/J" + str(
+        log_dir = os.path.dirname(__file__) + "/training_results/J" + str(
             dfjspt_params.n_jobs) + "_M" + str(dfjspt_params.n_machines) + "_T" + str(dfjspt_params.n_transbots)
 
         ModelCatalog.register_custom_model(
@@ -145,13 +145,11 @@ if __name__ == "__main__":
             else:
                 return "policy_agent2"
 
-        num_workers = 50
-        num_gpu = 0
-        if num_gpu >0:
-            # driver_gpu = 0.1
-            # worker_gpu = (1 - driver_gpu) / num_workers
-            driver_gpu = 0
-            worker_gpu = 0
+        num_workers = dfjspt_params.num_workers
+        num_gpu = dfjspt_params.num_gpu
+        if num_gpu > 0:
+            driver_gpu = 0.1
+            worker_gpu = (1 - driver_gpu) / num_workers
         else:
             driver_gpu = 0
             worker_gpu = 0
@@ -167,7 +165,7 @@ if __name__ == "__main__":
             "framework": dfjspt_params.framework,
             # rollouts:
             "num_rollout_workers": num_workers,
-            "num_envs_per_worker": 4,
+            "num_envs_per_worker": dfjspt_params.num_envs_per_worker,
             "batch_mode": "complete_episodes",
             # debugging：
             "log_level": "WARN",
@@ -175,17 +173,17 @@ if __name__ == "__main__":
             # callbacks：
             "callbacks_class": MyCallbacks,
             # resources：
-            "num_gpus": 0,
-            "num_gpus_per_worker": 0,
+            "num_gpus": driver_gpu,
+            "num_gpus_per_worker": worker_gpu,
             "num_cpus_per_worker": 1,
-            "num_cpus_for_local_worker": 4,
+            "num_cpus_for_local_worker": 1,
             # evaluation:
             "evaluation_interval": 5,
             "evaluation_duration": 10,
             "evaluation_duration_unit": "episodes",
             "evaluation_parallel_to_training": True,
             "enable_async_evaluation": True,
-            "evaluation_num_workers": 2,
+            "evaluation_num_workers": 1,
             "evaluation_config": PPOConfig.overrides(
                 env_config={
                     "train_or_eval_or_test": "eval",
@@ -199,7 +197,7 @@ if __name__ == "__main__":
             "train_batch_size": dfjspt_params.n_jobs * dfjspt_params.n_machines * max(num_workers, 1) * 120,
             "sgd_minibatch_size": dfjspt_params.n_jobs * dfjspt_params.n_machines * 120,
             "num_sgd_iter": 10,
-            "entropy_coeff": 0,
+            "entropy_coeff": 0.001,
             # multi_agent
             "policies": policies,
             "policy_mapping_fn": policy_mapping_fn,

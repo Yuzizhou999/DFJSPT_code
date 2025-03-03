@@ -6,14 +6,17 @@ local_mode = False
 use_tune = True
 use_custom_loss = True
 il_loss_weight = 10.0
-stop_iters = 5000
+stop_iters = 200
 stop_timesteps = 100000000000
 stop_reward = 2
+num_workers = 4
+num_gpu = 0
+num_envs_per_worker = 4
 
 
-max_n_jobs = 50
+max_n_jobs = 10
 n_jobs_is_fixed = True
-n_jobs = 50
+n_jobs = 10
 n_operations_is_n_machines = False
 min_n_operations = 5
 max_n_operations = 5
@@ -22,22 +25,22 @@ new_arrival_jobs = 3
 earliest_arrive_time = 30
 latest_arrive_time = 300
 
-max_n_machines = 20
+max_n_machines = 5
 min_prcs_time = 1
 max_prcs_time = 100
 n_machines_is_fixed = True
-n_machines = 20
+n_machines = 5
 is_fully_flexible = False
 min_compatible_machines = 1
 time_for_compatible_machines_are_same = False
 time_viration_range = 5
 
-max_n_transbots = 10
+max_n_transbots = 3
 min_tspt_time = 1
 max_tspt_time = 10
 loaded_transport_time_scale = 1.5
 n_transbots_is_fixed = True
-n_transbots = 10
+n_transbots = 3
 
 all_machines_are_perfect = False
 min_quality = 0.1

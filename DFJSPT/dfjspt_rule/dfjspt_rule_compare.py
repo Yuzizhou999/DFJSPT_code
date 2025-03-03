@@ -10,7 +10,6 @@ from DFJSPT.dfjspt_rule.dfjspt_rule5_SPT_EET_EET import rule5_mean_makespan, rul
 from DFJSPT.dfjspt_rule.dfjspt_rule6_SPT_SPT_SPT import rule6_mean_makespan, rule6_single_makespan
 from DFJSPT.dfjspt_rule.dfjspt_rule7_MTWR_EET_EET import rule7_mean_makespan, rule7_single_makespan
 from DFJSPT.dfjspt_rule.dfjspt_rule8_MTWR_SPT_SPT import rule8_mean_makespan, rule8_single_makespan
-from DFJSPT.dfjspt_rule.dfjspt_rule9_FDDMTWR_EET_EET import rule9_mean_makespan, rule9_single_makespan
 from DFJSPT import dfjspt_params
 
 
@@ -23,7 +22,6 @@ rules_average = {
     6: rule6_mean_makespan,
     7: rule7_mean_makespan,
     8: rule8_mean_makespan,
-    9: rule9_mean_makespan,
 }
 
 rules_single = {
@@ -35,13 +33,12 @@ rules_single = {
     6: rule6_single_makespan,
     7: rule7_single_makespan,
     8: rule8_single_makespan,
-    9: rule9_single_makespan,
 }
 
-average_makespans = np.zeros((9,))
+average_makespans = np.zeros((8,))
 num_repeat = 10
 
-for i in range(1, 10):
+for i in range(1, 9):
     # print(f"rule {i}:")
     rule_single = rules_single.get(i)
     if rule_single:
@@ -59,8 +56,9 @@ for i in range(1, 10):
 
             makespan_list.append(makespan)
         average_makespan = np.mean(makespan_list)
-        print(f"rule{i}_makespan_list = {makespan_list}\n")
-        # print(average_makespan)
+        print(f"Rule{i}: Average makespans for each test instance are: \n")
+        print(makespan_list)
+        print(f"Total average makespan across test instances is {average_makespan}\n")
         average_makespans[i-1] = average_makespan
 
 best_rule = np.argmin(average_makespans) + 1

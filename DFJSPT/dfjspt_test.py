@@ -33,8 +33,8 @@ ModelCatalog.register_custom_model(
     "transbot_agent_model", TransbotActionMaskModel
 )
 
-checkpoint_path = \
-    '/home/MyTrainable_DfjsptMaEnv_bba06_00000_0_2024-08-04_17-12-30/checkpoint_000036'
+checkpoint_path = os.path.dirname(__file__) + "/training_results/J" + str(
+            dfjspt_params.n_jobs) + "_M" + str(dfjspt_params.n_machines) + "_T" + str(dfjspt_params.n_transbots) + '/MyTrainable_DfjsptMaEnv_bfb1a_00000_0_2025-03-03_17-49-07/checkpoint_000010'
 
 job_policy_checkpoint_path = checkpoint_path + '/policies/policy_agent0'
 job_policy = Policy.from_checkpoint(job_policy_checkpoint_path)
@@ -101,9 +101,9 @@ for test_id in range(test_instances):
         makespans.append(make_span)
     time6 = time.time()
     average_running_time.append((time6 - time5) / num_repeat)
-    print(f"Average time for a instance {test_id + 1} is {(time6 - time5) / num_repeat}")
+    print(f"Average time for test instance {test_id + 1} is {(time6 - time5) / num_repeat}")
     mean_value = np.min(makespans)
-    print(f"DRL average makespan for instance {test_id + 1} is {mean_value}")
+    print(f"DRL average makespan for test instance {test_id + 1} is {mean_value}")
     average_makespans[test_id] = mean_value
 
 print("Average makespans for all test instances:")
