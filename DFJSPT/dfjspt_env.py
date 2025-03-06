@@ -1298,25 +1298,7 @@ class DfjsptMaEnv(MultiAgentEnv):
         vis = self.gantt_chart_rgb_array(df=df, colors=colors)
         self.render_rgb_array(vis)
 
-    # def get_normalized_obs(self, raw_observations):
-    #
-    #     normalized_observation = {}
-    #
-    #     for feature_name, feature_value in raw_observations.items():
-    #         # Check if the feature_value is continuous (array-like)
-    #         if isinstance(feature_value, np.ndarray) and len(feature_value.shape) > 1:
-    #             # For arrays (continuous values), apply min-max scaling
-    #             min_val = np.min(feature_value)
-    #             max_val = np.max(feature_value)
-    #             normalized_feature_value = (feature_value - min_val) / (max_val - min_val + 1e-8)
-    #         else:
-    #             # For scalar or discrete values, apply custom normalization (e.g., dividing by a constant)
-    #             normalized_feature_value = feature_value / (self.n_jobs * self.max_n_operations * 2.0)  # Adjust the divisor based on your data range
-    #
-    #         # Store the normalized value in the new dictionary
-    #         normalized_observation[feature_name] = normalized_feature_value
-    #
-    #     return normalized_observation
+
 
 
 

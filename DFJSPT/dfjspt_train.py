@@ -85,6 +85,9 @@ if __name__ == "__main__":
 
     for _ in range(1):
 
+        print(
+            f"Start training with {dfjspt_params.n_jobs} jobs, {dfjspt_params.n_machines} machines, and {dfjspt_params.n_transbots} transbots.")
+
         log_dir = os.path.dirname(__file__) + "/training_results/J" + str(
             dfjspt_params.n_jobs) + "_M" + str(dfjspt_params.n_machines) + "_T" + str(dfjspt_params.n_transbots)
 

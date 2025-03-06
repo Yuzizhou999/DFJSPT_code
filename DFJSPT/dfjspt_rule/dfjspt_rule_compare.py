@@ -38,6 +38,8 @@ rules_single = {
 average_makespans = np.zeros((8,))
 num_repeat = 10
 
+print(f"Start testing instances with {dfjspt_params.n_jobs} jobs, {dfjspt_params.n_machines} machines, and {dfjspt_params.n_transbots} transbots using heuristic dispatching rules.")
+
 for i in range(1, 9):
     # print(f"rule {i}:")
     rule_single = rules_single.get(i)

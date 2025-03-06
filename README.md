@@ -34,6 +34,10 @@ The project includes several components such as environment setups, agent models
 
 - **`dfjspt_env_for_benchmark.py`**: A specialized environment setup for benchmarking scheduling solutions on "Hurink_data" dataset.
 
+- **`dfjspt_env_for_imitation.py`**: Environment setup for generating data for imitation learning.
+
+- **`dfjspt_generate_a_sample_batch.py`**: Generates sample batches for imitation learning.
+
 - **`dfjspt_agent_model.py`**: Defines the models of the reinforcement learning agents used in this project, including the high, mid, and low-level agents.
 
 - **`dfjspt_train.py`**: The script used to train the DRL agents, including setting up the environment and training loops.
@@ -47,8 +51,8 @@ The project includes several components such as environment setups, agent models
 
 Clone this repository to your local machine:
    ```bash
-   git clone https://github.com/ClouDaDaDa/dfjspt_code.git
-   cd dfjsp_code
+   git clone https://github.com/ClouDaDaDa/DFJSPT_code.git
+   cd DFJSPT_code
    ```
 
 Ensure that you have all the required dependencies installed by running:
@@ -66,7 +70,9 @@ python DFJSPT/dfjspt_train.py
 
 This will initialize the environment, set up the agent, and start the training loop. The training process will utilize both DRL and IL strategies to optimize scheduling.
 
-By default, the training script is configured to run with `num_workers=4` to ensure compatibility with small computers. If you'd like to use multiple CPUs for parallel environment sampling, you can increase this parameter in the script.
+By default, the training script is configured to run with `num_workers=4` to ensure compatibility with light-weight computers. If you'd like to use multiple CPUs for parallel environment sampling, you can increase this parameter in the script.
+
+The default number of training iterations is set to `200`. After reaching this number, training will automatically stop. If you wish to adjust the stopping condition, you can modify the `stop_iters` parameter in the `dfjspt_params.py` configuration file.
 
 During training, the script will automatically create subdirectories to save the training results and logs. The directory structure will be organized as follows:
 
@@ -80,6 +86,11 @@ Where:
 - `M<machine_count>` refers to the number of machines.
 - `T<transbot_count>` refers to the number of transbots.
 
+To reproduce the results from the paper, assuming your computer has sufficient processing power, make the following configuration adjustments:
+
+Set `num_workers=50` in the script to utilize more CPUs for parallel data sampling.
+Set `stop_iters=1000` in the dfjspt_params.py file to increase the number of training iterations to 1000.
+
 ### Testing a Model
 To test a trained model:
 ```bash
@@ -88,7 +99,13 @@ python DFJSPT/dfjspt_test.py
 
 This will evaluate the trained agent on specified test environments and provide performance metrics for the scheduling solution.
 
-### Running Experiments
+The test script determines the size of the test cases (i.e., the number of jobs, machines, and transbots) based on the configuration parameters defined in the dfjspt_params.py file. Specifically, the test case size is controlled by the following parameters in `dfjspt_params.py`.
+
+The script will use the trained model stored in the `training_results/` directory. The trained model's specific subdirectory is determined by the job, machine, and transbot configuration, which matches the naming convention used during training.
+
+By default, the test script will run `100` test cases to evaluate the model's performance. This aligns with the experimental setup described in `Section 5.4: Result Analysis on Generated Instances` of the paper.
+
+### Running Heuristic rules
 To run experiments using different dispatching rules, you can execute the scripts located in the `DFJSPT/dfjspt_rule/` directory. These scripts contain various predefined dispatching rules for job selection, machine selection, and transbot scheduling. 
 
 For example:
