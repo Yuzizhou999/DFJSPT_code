@@ -3,15 +3,15 @@
 as_test = False
 framework = "torch"
 local_mode = False
-use_tune = True
+use_tune = True  # Restored to True (use hierarchical_train_complete.py for Method 3)
 use_custom_loss = True
 il_loss_weight = 10.0
-stop_iters = 200
+stop_iters = 10
 stop_timesteps = 100000000000
 stop_reward = 2
-num_workers = 4
+num_workers = 1  # Reduced from 4 for debugging
 num_gpu = 0
-num_envs_per_worker = 4
+num_envs_per_worker = 1  # Reduced from 4 for debugging
 
 
 max_n_jobs = 10
@@ -68,6 +68,43 @@ JobAsAction = True
 gantt_y_axis = "nJob"
 drawMachineToPrcsEdges = True
 default_visualisations = None
+
+
+# ===== Hierarchical MARL params =====
+# Strategy layer configuration
+use_hierarchical_framework = True  # RE-ENABLED after fixing strategy observation frequency
+strategy_update_frequency = 1  # How often strategy layer makes decisions (in episodes)
+strategy_action_continuous = True  # True: continuous preference vector, False: discrete choices
+strategy_action_dim = 3  # Dimension of preference vector [efficiency, cost, delivery]
+
+# Multi-objective reward configuration
+use_multi_objective_reward = True  # RE-ENABLED after fixing strategy observation frequency
+reward_normalization_method = "ema"  # Options: "ema", "minmax", "none"
+ema_alpha = 0.1  # EMA smoothing factor for reward normalization
+
+# Reward component weights (for computing sub-rewards)
+efficiency_weight = 1.0  # Weight for efficiency reward (makespan, utilization)
+cost_weight = 1.0  # Weight for cost reward (energy, transport, wear)
+delivery_weight = 1.0  # Weight for delivery reward (tardiness penalty)
+
+# Cost calculation parameters
+energy_cost_per_unit_time = 0.1  # Cost per unit time machine running
+transport_cost_per_unit_time = 0.05  # Cost per unit time transbot moving
+machine_wear_cost = 0.01  # Cost per operation for machine wear
+
+# Delivery parameters
+delivery_due_time_factor = 1.5  # Due time = mean_processing_time * this factor
+tardiness_penalty_factor = 2.0  # Penalty multiplier for late jobs
+
+# Potential-based reward shaping
+use_potential_shaping = False  # Enable potential-based reward shaping
+potential_gamma = 0.99  # Discount factor for potential shaping
+
+# GNN encoder configuration (for future use)
+use_gnn_encoder = False  # Enable GNN encoder (requires PyTorch Geometric)
+gnn_hidden_dim = 128  # Hidden dimension for GNN
+gnn_num_layers = 3  # Number of GNN layers
+gnn_pooling = "mean"  # Pooling method: "mean", "max", "attention"
 
 
 

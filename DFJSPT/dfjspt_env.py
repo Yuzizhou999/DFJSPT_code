@@ -154,6 +154,20 @@ class DfjsptMaEnv(MultiAgentEnv):
         self.current_instance_id = 0
         self.instance_count = 0
 
+        # Hierarchical MARL: Multi-objective reward tracking
+        self.current_preference_vector = np.array([1/3, 1/3, 1/3])  # Default: equal weights
+        self.multi_obj_reward = np.array([0.0, 0.0, 0.0])  # [efficiency, cost, delivery]
+        self.total_energy_cost = 0.0
+        self.total_transport_cost = 0.0
+        self.total_wear_cost = 0.0
+        self.total_tardiness = 0.0
+        self.job_due_times = None  # Will be set in reset
+        
+        # EMA normalization tracking
+        self.reward_ema_mean = np.array([0.0, 0.0, 0.0])
+        self.reward_ema_std = np.array([1.0, 1.0, 1.0])
+        self.ema_initialized = False
+
         # 'routes' of the machines. indicates in which order a machine processes tasks
         self.machine_routes = None
         # 'routes' of the transbots. indicates in which order a machine processes tasks
@@ -239,6 +253,141 @@ class DfjsptMaEnv(MultiAgentEnv):
                 },
             }
 
+    def _compute_efficiency_reward(self):
+        """
+        Compute efficiency reward based on makespan improvement and machine utilization.
+        Returns a positive reward for better efficiency.
+        """
+        if not dfjspt_params.use_multi_objective_reward:
+            return 0.0
+        
+        # Makespan improvement (normalized by rule makespan)
+        makespan_improvement = (self.prev_cmax - self.curr_cmax) / max(self.rule_makespan_for_current_instance, 1.0)
+        
+        # Machine utilization (if scheduling is done)
+        if self.schedule_done:
+            total_processing_time = np.sum(self.machine_features[:self.n_machines, 4])
+            makespan = self.curr_cmax
+            n_machines = self.n_machines
+            utilization = total_processing_time / max(makespan * n_machines, 1.0)
+            efficiency_reward = makespan_improvement + utilization * 0.1
+        else:
+            efficiency_reward = makespan_improvement
+        
+        return efficiency_reward * dfjspt_params.efficiency_weight
+    
+    def _compute_cost_reward(self):
+        """
+        Compute cost reward based on energy consumption, transportation, and machine wear.
+        Returns a negative reward (cost is bad) that should be minimized.
+        """
+        if not dfjspt_params.use_multi_objective_reward:
+            return 0.0
+        
+        # Calculate incremental costs since last step
+        current_machine_time = np.sum(self.machine_features[:self.n_machines, 4])
+        current_transport_time = np.sum(self.transbot_features[:self.n_transbots, 5])
+        current_operations = np.sum(self.machine_features[:self.n_machines, 2])
+        
+        # Energy cost (machine running time)
+        energy_cost = current_machine_time * dfjspt_params.energy_cost_per_unit_time
+        
+        # Transport cost
+        transport_cost = current_transport_time * dfjspt_params.transport_cost_per_unit_time
+        
+        # Machine wear cost
+        wear_cost = current_operations * dfjspt_params.machine_wear_cost
+        
+        total_cost = energy_cost + transport_cost + wear_cost
+        
+        # Normalize by a reasonable upper bound
+        max_possible_cost = (
+            self.n_jobs * self.max_n_operations * dfjspt_params.max_prcs_time * 
+            dfjspt_params.energy_cost_per_unit_time * 2
+        )
+        
+        # Return negative reward (lower cost is better)
+        cost_reward = -total_cost / max(max_possible_cost, 1.0)
+        
+        return cost_reward * dfjspt_params.cost_weight
+    
+    def _compute_delivery_reward(self):
+        """
+        Compute delivery reward based on tardiness (lateness penalty).
+        Returns a negative reward for late jobs.
+        """
+        if not dfjspt_params.use_multi_objective_reward:
+            return 0.0
+        
+        tardiness = 0.0
+        if self.schedule_done:
+            for job_id in range(self.n_jobs):
+                completion_time = self.result_finish_time_for_jobs[job_id, :, :].max()
+                due_time = self.job_due_times[job_id]
+                if completion_time > due_time:
+                    tardiness += (completion_time - due_time)
+            
+            # Normalize tardiness
+            max_tardiness = np.sum(self.job_due_times) * dfjspt_params.tardiness_penalty_factor
+            delivery_reward = -tardiness / max(max_tardiness, 1.0)
+        else:
+            delivery_reward = 0.0
+        
+        return delivery_reward * dfjspt_params.delivery_weight
+    
+    def _normalize_rewards(self, raw_rewards):
+        """
+        Normalize multi-dimensional rewards using EMA-based standardization.
+        Args:
+            raw_rewards: numpy array of shape (3,) with [efficiency, cost, delivery] rewards
+        Returns:
+            normalized_rewards: numpy array of shape (3,)
+        """
+        if dfjspt_params.reward_normalization_method == "none":
+            return raw_rewards
+        
+        elif dfjspt_params.reward_normalization_method == "ema":
+            # Update EMA statistics
+            if not self.ema_initialized:
+                self.reward_ema_mean = raw_rewards.copy()
+                self.reward_ema_std = np.ones(3)
+                self.ema_initialized = True
+            else:
+                alpha = dfjspt_params.ema_alpha
+                self.reward_ema_mean = (1 - alpha) * self.reward_ema_mean + alpha * raw_rewards
+                squared_diff = (raw_rewards - self.reward_ema_mean) ** 2
+                self.reward_ema_std = np.sqrt((1 - alpha) * self.reward_ema_std ** 2 + alpha * squared_diff)
+            
+            # Standardize
+            normalized = (raw_rewards - self.reward_ema_mean) / (self.reward_ema_std + 1e-8)
+            return normalized
+        
+        else:
+            # Default: return raw rewards
+            return raw_rewards
+    
+    def _compute_multi_objective_reward(self):
+        """
+        Compute all three reward components and return as numpy array.
+        Returns:
+            rewards: numpy array of shape (3,) with [efficiency, cost, delivery]
+        """
+        r_efficiency = self._compute_efficiency_reward()
+        r_cost = self._compute_cost_reward()
+        r_delivery = self._compute_delivery_reward()
+        
+        return np.array([r_efficiency, r_cost, r_delivery])
+    
+    def _scalarize_reward(self, multi_reward):
+        """
+        Scalarize multi-objective reward using current preference vector.
+        Args:
+            multi_reward: numpy array of shape (3,)
+        Returns:
+            scalar_reward: float
+        """
+        return np.dot(self.current_preference_vector, multi_reward)
+
     def _get_obs(self):
         if self.stage == 0:
             return {
@@ -273,6 +422,81 @@ class DfjsptMaEnv(MultiAgentEnv):
                     "observation": self.transbot_features,
                 }
             }
+
+    def get_strategy_obs(self):
+        """
+        Get global observation for strategy layer.
+        
+        Returns aggregated statistics from jobs, machines, and transbots
+        to help strategy layer decide preference vector.
+        """
+        # Job statistics
+        n_jobs_total = self.n_jobs
+        n_jobs_completed = np.sum(self.job_features[:self.n_jobs, 4])
+        n_jobs_remaining = n_jobs_total - n_jobs_completed
+        avg_job_progress = np.mean(self.job_features[:self.n_jobs, 1] / 
+                                   np.maximum(self.n_operations_for_jobs, 1))
+        total_remaining_ops = np.sum(self.n_operations_for_jobs - self.job_features[:self.n_jobs, 1])
+        avg_remaining_processing_time = np.mean(self.job_features[:self.n_jobs, 7])
+        
+        # Machine statistics
+        n_machines = self.n_machines
+        avg_machine_utilization = np.mean(self.machine_features[:self.n_machines, 2]) / max(n_jobs_total, 1)
+        avg_machine_busy_time = np.mean(self.machine_features[:self.n_machines, 4])
+        max_machine_busy_time = np.max(self.machine_features[:self.n_machines, 4])
+        
+        # Transbot statistics
+        n_transbots = self.n_transbots
+        avg_transbot_utilization = np.mean(self.transbot_features[:self.n_transbots, 2]) / max(n_jobs_total, 1)
+        avg_transbot_busy_time = np.mean(self.transbot_features[:self.n_transbots, 5])
+        
+        # Time and makespan statistics
+        current_makespan = self.curr_cmax
+        normalized_makespan = current_makespan / max(self.rule_makespan_for_current_instance, 1.0)
+        
+        # Multi-objective reward components (if available)
+        if hasattr(self, 'multi_obj_reward'):
+            r_efficiency = self.multi_obj_reward[0]
+            r_cost = self.multi_obj_reward[1]
+            r_delivery = self.multi_obj_reward[2]
+        else:
+            r_efficiency = 0.0
+            r_cost = 0.0
+            r_delivery = 0.0
+        
+        # Aggregate all features into a single vector
+        strategy_obs = np.array([
+            # Job features (6)
+            n_jobs_remaining / max(n_jobs_total, 1),
+            avg_job_progress,
+            total_remaining_ops / max(n_jobs_total * self.max_n_operations, 1),
+            avg_remaining_processing_time / max(self.rule_makespan_for_current_instance, 1),
+            n_jobs_completed / max(n_jobs_total, 1),
+            n_jobs_total / MAX_JOBS,
+            
+            # Machine features (5)
+            avg_machine_utilization,
+            avg_machine_busy_time / max(current_makespan, 1),
+            max_machine_busy_time / max(current_makespan, 1),
+            n_machines / MAX_MACHINES,
+            np.std(self.machine_features[:self.n_machines, 4]) / max(current_makespan, 1),
+            
+            # Transbot features (3)
+            avg_transbot_utilization,
+            avg_transbot_busy_time / max(current_makespan, 1),
+            n_transbots / MAX_TRANSBOTS,
+            
+            # Makespan features (2)
+            normalized_makespan,
+            (current_makespan - self.prev_cmax) / max(self.rule_makespan_for_current_instance, 1),
+            
+            # Multi-objective reward components (3)
+            r_efficiency,
+            r_cost,
+            r_delivery,
+        ], dtype=np.float32)
+        
+        return strategy_obs
 
     def reset(self, seed=None, options=None):
         self.resetted = True
@@ -426,11 +650,52 @@ class DfjsptMaEnv(MultiAgentEnv):
         self.curr_cmax = 0
         self.reward_this_step = 0.0
         self.schedule_done = False
+        
+        # Initialize multi-objective tracking
+        self.multi_obj_reward = np.array([0.0, 0.0, 0.0])
+        self.total_energy_cost = 0.0
+        self.total_transport_cost = 0.0
+        self.total_wear_cost = 0.0
+        self.total_tardiness = 0.0
+        
+        # Calculate due times for jobs (based on mean processing time)
+        self.job_due_times = np.zeros(self.n_jobs)
+        for job_id in range(self.n_jobs):
+            self.job_due_times[job_id] = (
+                self.job_arrival_time[job_id] + 
+                self.mean_cumulative_processing_time_of_jobs[job_id, -1] * 
+                dfjspt_params.delivery_due_time_factor
+            )
+        
         self.stage = 0
         observations = self._get_obs()
         info = self._get_info()
 
         return observations, info
+    
+    def set_preference_vector(self, preference_vector):
+        """
+        Set preference vector for multi-objective reward scalarization.
+        
+        This allows external controllers (e.g., strategy meta-controller) to 
+        set preference without being part of the RLlib agent framework.
+        
+        Args:
+            preference_vector: numpy array of shape (3,) with weights for
+                              [efficiency, cost, delivery]. Should sum to 1.0.
+        """
+        if not isinstance(preference_vector, np.ndarray):
+            preference_vector = np.array(preference_vector, dtype=np.float32)
+        
+        # Normalize to ensure sum = 1.0
+        preference_sum = np.sum(preference_vector)
+        if preference_sum > 0:
+            preference_vector = preference_vector / preference_sum
+        else:
+            # Fallback to balanced if invalid
+            preference_vector = np.array([1/3, 1/3, 1/3], dtype=np.float32)
+        
+        self.current_preference_vector = preference_vector
 
     def step(self, action):
         observations, reward, terminated, truncated, info = {}, {}, {}, {}, {}
@@ -552,8 +817,18 @@ class DfjsptMaEnv(MultiAgentEnv):
             self.prev_cmax = self.curr_cmax
             self.curr_cmax = self.result_finish_time_for_jobs.max()
 
-            self.reward_this_step = self.reward_this_step + 1.0 * (self.prev_cmax - self.curr_cmax) / self.rule_makespan_for_current_instance
-            # self.reward_this_step = self.reward_this_step + (self.prev_cmax - self.curr_cmax)
+            # Compute reward (original or multi-objective)
+            if dfjspt_params.use_multi_objective_reward:
+                # Compute multi-objective rewards
+                self.multi_obj_reward = self._compute_multi_objective_reward()
+                # Normalize rewards
+                normalized_rewards = self._normalize_rewards(self.multi_obj_reward)
+                # Scalarize using preference vector
+                tactical_reward = self._scalarize_reward(normalized_rewards)
+                self.reward_this_step = self.reward_this_step + tactical_reward
+            else:
+                # Original single-objective reward (makespan-based)
+                self.reward_this_step = self.reward_this_step + 1.0 * (self.prev_cmax - self.curr_cmax) / self.rule_makespan_for_current_instance
 
             self.schedule_done = min(self.job_features[:, 4]) == 1
             if self.schedule_done:

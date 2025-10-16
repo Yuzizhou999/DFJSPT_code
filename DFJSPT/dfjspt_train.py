@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 # from memory_profiler import profile
 # @profile
 # def func():
@@ -20,6 +21,13 @@ from typing import Dict
 # from gymnasium import spaces
 # import torch
 # import numpy as np
+
+# Ensure project root is on sys.path so absolute imports like
+# `from DFJSPT import ...` work when running this file directly
+# (e.g. `python DFJSPT/dfjspt_train.py`).
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 from DFJSPT import dfjspt_params
 from DFJSPT.dfjspt_env import DfjsptMaEnv

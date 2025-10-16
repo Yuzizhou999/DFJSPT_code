@@ -279,3 +279,101 @@ class TransbotActionMaskModel(TorchModelV2, nn.Module):
             return policy_loss
         else:
             raise RuntimeError('Invalid "use_custom_loss" value!')
+
+class StrategyModel(TorchModelV2, nn.Module):
+    """
+    Strategy layer model that outputs preference vector for multi-objective optimization.
+    
+    Input: Global state (aggregated features from jobs, machines, transbots)
+    Output: Preference vector [p_efficiency, p_cost, p_delivery] (sums to 1)
+    """
+
+    def __init__(
+        self,
+        obs_space,
+        action_space,
+        num_outputs,
+        model_config,
+        name,
+        **kwargs,
+    ):
+        TorchModelV2.__init__(
+            self, obs_space, action_space, num_outputs, model_config, name, **kwargs
+        )
+        nn.Module.__init__(self)
+
+        # Extract observation dimension
+        if hasattr(obs_space, 'original_space'):
+            obs_dim = obs_space.original_space.shape[0]
+        else:
+            obs_dim = obs_space.shape[0]
+
+        # Get hidden layer sizes from config
+        hiddens = model_config.get("fcnet_hiddens", [128, 128])
+        activation = model_config.get("fcnet_activation", "tanh")
+
+        # Build network layers
+        layers = []
+        in_size = obs_dim
+        
+        for hidden_size in hiddens:
+            layers.append(nn.Linear(in_size, hidden_size))
+            if activation == "tanh":
+                layers.append(nn.Tanh())
+            elif activation == "relu":
+                layers.append(nn.ReLU())
+            else:
+                layers.append(nn.Tanh())
+            in_size = hidden_size
+        
+        # Output layer for preference vector (3 dimensions)
+        layers.append(nn.Linear(in_size, num_outputs))
+        
+        self.policy_network = nn.Sequential(*layers)
+        
+        # Value network (for critic)
+        value_layers = []
+        in_size = obs_dim
+        for hidden_size in hiddens:
+            value_layers.append(nn.Linear(in_size, hidden_size))
+            if activation == "tanh":
+                value_layers.append(nn.Tanh())
+            elif activation == "relu":
+                value_layers.append(nn.ReLU())
+            else:
+                value_layers.append(nn.Tanh())
+            in_size = hidden_size
+        value_layers.append(nn.Linear(in_size, 1))
+        
+        self.value_network = nn.Sequential(*value_layers)
+        
+        self._value_out = None
+
+    @override(ModelV2)
+    def forward(self, input_dict, state, seq_lens):
+        """
+        Forward pass to compute preference vector logits.
+        
+        The logits will be passed through softmax by the action distribution
+        to ensure the preference vector sums to 1.
+        """
+        obs = input_dict["obs"]
+        
+        # Ensure obs is 2D (batch_size, obs_dim)
+        if len(obs.shape) == 1:
+            obs = obs.unsqueeze(0)
+        
+        # Policy network output (logits for preference vector)
+        logits = self.policy_network(obs.float())
+        
+        # Value network output
+        self._value_out = self.value_network(obs.float())
+        
+        return logits, state
+
+    @override(ModelV2)
+    def value_function(self):
+        """Return the value function output from the last forward pass."""
+        if self._value_out is None:
+            return torch.zeros(1)
+        return self._value_out.squeeze(-1)
