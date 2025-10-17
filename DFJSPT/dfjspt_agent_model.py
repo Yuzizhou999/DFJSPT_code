@@ -11,9 +11,22 @@ from DFJSPT.dfjspt_generate_a_sample_batch import generate_sample_batch
 
 torch, nn = try_import_torch()
 
+# GNN encoder imports (conditional)
+if dfjspt_params.use_gnn_encoder:
+    try:
+        from DFJSPT.dfjspt_gnn_encoder import WorkshopGNN, TORCH_GEOMETRIC_AVAILABLE
+        from DFJSPT.gnn_obs_converter import observation_to_graph, batch_observations_to_graphs
+        GNN_AVAILABLE = TORCH_GEOMETRIC_AVAILABLE
+    except ImportError as e:
+        print(f"Warning: Could not import GNN encoder: {e}")
+        print("Falling back to MLP encoder.")
+        GNN_AVAILABLE = False
+else:
+    GNN_AVAILABLE = False
+
 
 class JobActionMaskModel(TorchModelV2, nn.Module):
-    """PyTorch version of above ActionMaskingModel."""
+    """PyTorch version of above ActionMaskingModel with optional GNN encoder."""
 
     def __init__(
         self,
@@ -36,23 +49,100 @@ class JobActionMaskModel(TorchModelV2, nn.Module):
         )
         nn.Module.__init__(self)
 
-        self.internal_model = TorchFC(
-            orig_space["observation"],
-            action_space,
-            num_outputs,
-            model_config,
-            name + "_internal",
-        )
+        # Choose encoder based on configuration
+        if dfjspt_params.use_gnn_encoder and GNN_AVAILABLE:
+            print(f"✅ {name}: Using GNN encoder")
+            # GNN encoder
+            node_feature_dims = {
+                'job': orig_space["observation"].shape[1],  # Number of features per job
+                'machine': 0,  # Not used in job agent
+                'transbot': 0,  # Not used in job agent
+                'operation': 0,  # Not used in job agent
+            }
+            
+            self.gnn_encoder = WorkshopGNN(
+                node_feature_dims=node_feature_dims,
+                edge_feature_dim=4,
+                hidden_dim=dfjspt_params.gnn_hidden_dim,
+                num_layers=dfjspt_params.gnn_num_layers,
+                gnn_type=dfjspt_params.gnn_type,
+                pooling=dfjspt_params.gnn_pooling,
+                dropout=dfjspt_params.gnn_dropout,
+            )
+            
+            # Policy and value heads on top of GNN
+            self.policy_head = nn.Sequential(
+                nn.Linear(dfjspt_params.gnn_hidden_dim, dfjspt_params.gnn_hidden_dim),
+                nn.ReLU(),
+                nn.Linear(dfjspt_params.gnn_hidden_dim, num_outputs),
+            )
+            
+            self.value_head = nn.Sequential(
+                nn.Linear(dfjspt_params.gnn_hidden_dim, dfjspt_params.gnn_hidden_dim),
+                nn.ReLU(),
+                nn.Linear(dfjspt_params.gnn_hidden_dim, 1),
+            )
+            
+            self.use_gnn = True
+            self.internal_model = None
+            self._last_value = None
+            
+        else:
+            print(f"ℹ️  {name}: Using MLP encoder (GNN disabled or unavailable)")
+            # Traditional MLP encoder
+            self.internal_model = TorchFC(
+                orig_space["observation"],
+                action_space,
+                num_outputs,
+                model_config,
+                name + "_internal",
+            )
+            self.use_gnn = False
+            self.gnn_encoder = None
+            self.policy_head = None
+            self.value_head = None
 
     @override(ModelV2)
     def forward(self, input_dict, state, seq_lens):
         # Extract the available actions tensor from the observation.
         action_mask = input_dict["obs"]["action_mask"]
+        observation = input_dict["obs"]["observation"]
 
-        # Compute the unmasked logits.
-        logits, _ = self.internal_model({"obs": input_dict["obs"]["observation"]})
-
-        # Convert action_mask into a [0.0 || -inf]-type mask.
+        if self.use_gnn and self.gnn_encoder is not None:
+            # GNN forward pass
+            # observation shape: [batch_size, n_jobs, n_features]
+            batch_size = observation.shape[0] if len(observation.shape) > 2 else 1
+            
+            if batch_size == 1 and len(observation.shape) == 2:
+                # Single observation, add batch dimension
+                observation = observation.unsqueeze(0)
+            
+            # Convert observation to graph structure
+            graph_dict = batch_observations_to_graphs(observation, agent_type='job')
+            
+            # Pass through GNN
+            gnn_output = self.gnn_encoder(
+                node_features=graph_dict['node_features'],
+                node_types=graph_dict['node_types'],
+                edge_index=graph_dict['edge_index'],
+                edge_features=graph_dict['edge_features'],
+                batch=graph_dict['batch'],
+            )
+            
+            # Get job-specific embedding
+            job_embedding = gnn_output['job_embedding']  # [batch_size, hidden_dim]
+            
+            # Generate logits
+            logits = self.policy_head(job_embedding)  # [batch_size, num_actions]
+            
+            # Compute value for value_function()
+            self._last_value = self.value_head(job_embedding).squeeze(-1)  # [batch_size]
+            
+        else:
+            # MLP forward pass
+            logits, _ = self.internal_model({"obs": observation})
+        
+        # Apply action mask
         inf_mask = torch.clamp(torch.log(action_mask), min=FLOAT_MIN)
         masked_logits = logits + inf_mask
 
@@ -61,7 +151,10 @@ class JobActionMaskModel(TorchModelV2, nn.Module):
 
     @override(ModelV2)
     def value_function(self):
-        return self.internal_model.value_function()
+        if self.use_gnn:
+            return self._last_value if self._last_value is not None else torch.zeros(1)
+        else:
+            return self.internal_model.value_function()
 
     @override(ModelV2)
     def custom_loss(self, policy_loss, loss_inputs=None):
@@ -105,7 +198,7 @@ class JobActionMaskModel(TorchModelV2, nn.Module):
 
 
 class MachineActionMaskModel(TorchModelV2, nn.Module):
-    """PyTorch version of above ActionMaskingModel."""
+    """PyTorch version of above ActionMaskingModel with optional GNN encoder."""
 
     def __init__(
         self,
@@ -128,22 +221,95 @@ class MachineActionMaskModel(TorchModelV2, nn.Module):
         )
         nn.Module.__init__(self)
 
-        self.internal_model = TorchFC(
-            orig_space["observation"],
-            action_space,
-            num_outputs,
-            model_config,
-            name + "_internal",
-        )
+        # Choose encoder based on configuration
+        if dfjspt_params.use_gnn_encoder and GNN_AVAILABLE:
+            print(f"✅ {name}: Using GNN encoder")
+            # GNN encoder
+            node_feature_dims = {
+                'job': 0,
+                'machine': orig_space["observation"].shape[1],
+                'transbot': 0,
+                'operation': 0,
+            }
+            
+            self.gnn_encoder = WorkshopGNN(
+                node_feature_dims=node_feature_dims,
+                edge_feature_dim=4,
+                hidden_dim=dfjspt_params.gnn_hidden_dim,
+                num_layers=dfjspt_params.gnn_num_layers,
+                gnn_type=dfjspt_params.gnn_type,
+                pooling=dfjspt_params.gnn_pooling,
+                dropout=dfjspt_params.gnn_dropout,
+            )
+            
+            self.policy_head = nn.Sequential(
+                nn.Linear(dfjspt_params.gnn_hidden_dim, dfjspt_params.gnn_hidden_dim),
+                nn.ReLU(),
+                nn.Linear(dfjspt_params.gnn_hidden_dim, num_outputs),
+            )
+            
+            self.value_head = nn.Sequential(
+                nn.Linear(dfjspt_params.gnn_hidden_dim, dfjspt_params.gnn_hidden_dim),
+                nn.ReLU(),
+                nn.Linear(dfjspt_params.gnn_hidden_dim, 1),
+            )
+            
+            self.use_gnn = True
+            self.internal_model = None
+            self._last_value = None
+            
+        else:
+            print(f"ℹ️  {name}: Using MLP encoder")
+            self.internal_model = TorchFC(
+                orig_space["observation"],
+                action_space,
+                num_outputs,
+                model_config,
+                name + "_internal",
+            )
+            self.use_gnn = False
+            self.gnn_encoder = None
+            self.policy_head = None
+            self.value_head = None
 
     def forward(self, input_dict, state, seq_lens):
         # Extract the available actions tensor from the observation.
         action_mask = input_dict["obs"]["action_mask"]
+        observation = input_dict["obs"]["observation"]
 
-        # Compute the unmasked logits.
-        logits, _ = self.internal_model({"obs": input_dict["obs"]["observation"]})
+        if self.use_gnn and self.gnn_encoder is not None:
+            # GNN forward pass
+            batch_size = observation.shape[0] if len(observation.shape) > 2 else 1
+            
+            if batch_size == 1 and len(observation.shape) == 2:
+                observation = observation.unsqueeze(0)
+            
+            # Convert observation to graph structure
+            graph_dict = batch_observations_to_graphs(observation, agent_type='machine')
+            
+            # Pass through GNN
+            gnn_output = self.gnn_encoder(
+                node_features=graph_dict['node_features'],
+                node_types=graph_dict['node_types'],
+                edge_index=graph_dict['edge_index'],
+                edge_features=graph_dict['edge_features'],
+                batch=graph_dict['batch'],
+            )
+            
+            # Get machine-specific embedding
+            machine_embedding = gnn_output['machine_embedding']
+            
+            # Generate logits
+            logits = self.policy_head(machine_embedding)
+            
+            # Compute value
+            self._last_value = self.value_head(machine_embedding).squeeze(-1)
+            
+        else:
+            # MLP forward pass
+            logits, _ = self.internal_model({"obs": observation})
 
-        # Convert action_mask into a [0.0 || -inf]-type mask.
+        # Apply action mask
         inf_mask = torch.clamp(torch.log(action_mask), min=FLOAT_MIN)
         masked_logits = logits + inf_mask
 
@@ -151,7 +317,10 @@ class MachineActionMaskModel(TorchModelV2, nn.Module):
         return masked_logits, state
 
     def value_function(self):
-        return self.internal_model.value_function()
+        if self.use_gnn:
+            return self._last_value if self._last_value is not None else torch.zeros(1)
+        else:
+            return self.internal_model.value_function()
 
     @override(ModelV2)
     def custom_loss(self, policy_loss, loss_inputs=None):
@@ -194,7 +363,7 @@ class MachineActionMaskModel(TorchModelV2, nn.Module):
 
 
 class TransbotActionMaskModel(TorchModelV2, nn.Module):
-    """PyTorch version of above ActionMaskingModel."""
+    """PyTorch version of above ActionMaskingModel with optional GNN encoder."""
 
     def __init__(
         self,
@@ -216,22 +385,95 @@ class TransbotActionMaskModel(TorchModelV2, nn.Module):
         )
         nn.Module.__init__(self)
 
-        self.internal_model = TorchFC(
-            orig_space["observation"],
-            action_space,
-            num_outputs,
-            model_config,
-            name + "_internal",
-        )
+        # Choose encoder based on configuration
+        if dfjspt_params.use_gnn_encoder and GNN_AVAILABLE:
+            print(f"✅ {name}: Using GNN encoder")
+            # GNN encoder
+            node_feature_dims = {
+                'job': 0,
+                'machine': 0,
+                'transbot': orig_space["observation"].shape[1],
+                'operation': 0,
+            }
+            
+            self.gnn_encoder = WorkshopGNN(
+                node_feature_dims=node_feature_dims,
+                edge_feature_dim=4,
+                hidden_dim=dfjspt_params.gnn_hidden_dim,
+                num_layers=dfjspt_params.gnn_num_layers,
+                gnn_type=dfjspt_params.gnn_type,
+                pooling=dfjspt_params.gnn_pooling,
+                dropout=dfjspt_params.gnn_dropout,
+            )
+            
+            self.policy_head = nn.Sequential(
+                nn.Linear(dfjspt_params.gnn_hidden_dim, dfjspt_params.gnn_hidden_dim),
+                nn.ReLU(),
+                nn.Linear(dfjspt_params.gnn_hidden_dim, num_outputs),
+            )
+            
+            self.value_head = nn.Sequential(
+                nn.Linear(dfjspt_params.gnn_hidden_dim, dfjspt_params.gnn_hidden_dim),
+                nn.ReLU(),
+                nn.Linear(dfjspt_params.gnn_hidden_dim, 1),
+            )
+            
+            self.use_gnn = True
+            self.internal_model = None
+            self._last_value = None
+            
+        else:
+            print(f"ℹ️  {name}: Using MLP encoder")
+            self.internal_model = TorchFC(
+                orig_space["observation"],
+                action_space,
+                num_outputs,
+                model_config,
+                name + "_internal",
+            )
+            self.use_gnn = False
+            self.gnn_encoder = None
+            self.policy_head = None
+            self.value_head = None
 
     @override(ModelV2)
     def forward(self, input_dict, state, seq_lens):
         action_mask = input_dict["obs"]["action_mask"]
+        observation = input_dict["obs"]["observation"]
 
-        # Compute the unmasked logits.
-        logits, _ = self.internal_model({"obs": input_dict["obs"]["observation"]})
+        if self.use_gnn and self.gnn_encoder is not None:
+            # GNN forward pass
+            batch_size = observation.shape[0] if len(observation.shape) > 2 else 1
+            
+            if batch_size == 1 and len(observation.shape) == 2:
+                observation = observation.unsqueeze(0)
+            
+            # Convert observation to graph structure
+            graph_dict = batch_observations_to_graphs(observation, agent_type='transbot')
+            
+            # Pass through GNN
+            gnn_output = self.gnn_encoder(
+                node_features=graph_dict['node_features'],
+                node_types=graph_dict['node_types'],
+                edge_index=graph_dict['edge_index'],
+                edge_features=graph_dict['edge_features'],
+                batch=graph_dict['batch'],
+            )
+            
+            # Get transbot-specific embedding
+            transbot_embedding = gnn_output['transbot_embedding']
+            
+            # Generate logits
+            logits = self.policy_head(transbot_embedding)
+            
+            # Compute value
+            self._last_value = self.value_head(transbot_embedding).squeeze(-1)
+            
+        else:
+            # MLP forward pass
+            logits, _ = self.internal_model({"obs": observation})
 
-        # Convert action_mask into a [0.0 || -inf]-type mask.
+        # Apply action mask
         inf_mask = torch.clamp(torch.log(action_mask), min=FLOAT_MIN)
         masked_logits = logits + inf_mask
 
@@ -240,7 +482,10 @@ class TransbotActionMaskModel(TorchModelV2, nn.Module):
 
     @override(ModelV2)
     def value_function(self):
-        return self.internal_model.value_function()
+        if self.use_gnn:
+            return self._last_value if self._last_value is not None else torch.zeros(1)
+        else:
+            return self.internal_model.value_function()
 
     @override(ModelV2)
     def custom_loss(self, policy_loss, loss_inputs=None):

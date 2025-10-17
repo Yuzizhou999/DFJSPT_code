@@ -33,8 +33,8 @@ print(f"Multi-objective: {dfjspt_params.use_multi_objective_reward}")
 print("="*80)
 
 # Configuration
-NUM_ITERATIONS = 100
-CHECKPOINT_INTERVAL = 10
+NUM_ITERATIONS = 50
+CHECKPOINT_INTERVAL = 5
 STRATEGY_UPDATE_FREQUENCY = 5  # episodes per preference update
 EXPLORATION_EPSILON_START = 0.3
 EXPLORATION_EPSILON_END = 0.05
@@ -70,8 +70,8 @@ config = (
     )
     .framework("torch")
     .resources(
-        num_gpus=0,
-        num_cpus_for_local_worker=1,
+        num_gpus=1,
+        num_cpus_for_local_worker=2,
     )
     .rollouts(
         num_rollout_workers=dfjspt_params.num_workers,

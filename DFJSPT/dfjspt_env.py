@@ -20,6 +20,17 @@ from ray.rllib.env.multi_agent_env import MultiAgentEnv
 
 from DFJSPT.dfjspt_rule.dfjspt_rule9_FDDMTWR_EET_EET import rule9_a_makespan
 
+# Import reward normalizer if enabled
+if dfjspt_params.use_reward_normalization:
+    try:
+        from DFJSPT.reward_normalizer import MultiObjectiveRewardNormalizer
+        REWARD_NORMALIZER_AVAILABLE = True
+    except ImportError:
+        print("Warning: reward_normalizer not found. Falling back to simple EMA.")
+        REWARD_NORMALIZER_AVAILABLE = False
+else:
+    REWARD_NORMALIZER_AVAILABLE = False
+
 # from ray.rllib.utils.spaces.repeated import Repeated
 
 # Constraints on the Repeated space.
@@ -100,6 +111,9 @@ class DfjsptMaEnv(MultiAgentEnv):
         self.n_transbot_features = 7
         makespan_upper_bound = 10 * MAX_JOBS * MAX_MACHINES * (dfjspt_params.max_prcs_time + dfjspt_params.max_tspt_time)
 
+        # Store training mode
+        self.train_or_eval_or_test = env_config.get("train_or_eval_or_test", "train")
+        
         if env_config["train_or_eval_or_test"] == "train":
             self.start_of_instance_pool = 0
             self.end_of_instance_pool = dfjspt_params.n_instances_for_training
@@ -163,10 +177,22 @@ class DfjsptMaEnv(MultiAgentEnv):
         self.total_tardiness = 0.0
         self.job_due_times = None  # Will be set in reset
         
-        # EMA normalization tracking
-        self.reward_ema_mean = np.array([0.0, 0.0, 0.0])
-        self.reward_ema_std = np.array([1.0, 1.0, 1.0])
-        self.ema_initialized = False
+        # Reward normalization
+        if dfjspt_params.use_reward_normalization and REWARD_NORMALIZER_AVAILABLE:
+            self.reward_normalizer = MultiObjectiveRewardNormalizer(
+                component_names=('efficiency', 'cost', 'delivery'),
+                normalization_method=dfjspt_params.normalization_method,
+                epsilon=dfjspt_params.normalization_epsilon,
+                momentum=dfjspt_params.normalization_momentum,
+                enable_normalization=True,
+            )
+            print(f"✅ Reward normalizer initialized with method={dfjspt_params.normalization_method}")
+        else:
+            self.reward_normalizer = None
+            # Fallback: Simple EMA normalization tracking
+            self.reward_ema_mean = np.array([0.0, 0.0, 0.0])
+            self.reward_ema_std = np.array([1.0, 1.0, 1.0])
+            self.ema_initialized = False
 
         # 'routes' of the machines. indicates in which order a machine processes tasks
         self.machine_routes = None
@@ -337,13 +363,37 @@ class DfjsptMaEnv(MultiAgentEnv):
     
     def _normalize_rewards(self, raw_rewards):
         """
-        Normalize multi-dimensional rewards using EMA-based standardization.
+        Normalize multi-dimensional rewards using advanced normalizer or simple EMA.
         Args:
             raw_rewards: numpy array of shape (3,) with [efficiency, cost, delivery] rewards
         Returns:
             normalized_rewards: numpy array of shape (3,)
         """
-        if dfjspt_params.reward_normalization_method == "none":
+        # Use advanced normalizer if available
+        if self.reward_normalizer is not None:
+            reward_dict = {
+                'efficiency': raw_rewards[0],
+                'cost': raw_rewards[1],
+                'delivery': raw_rewards[2],
+            }
+            
+            # Update and normalize (only during training)
+            update_stats = (self.train_or_eval_or_test == "train")
+            normalized_dict = self.reward_normalizer.update_and_normalize(
+                reward_dict,
+                update_stats=update_stats
+            )
+            
+            # Convert back to array
+            normalized = np.array([
+                normalized_dict['efficiency'],
+                normalized_dict['cost'],
+                normalized_dict['delivery'],
+            ])
+            return normalized
+        
+        # Fallback: Simple EMA normalization
+        elif dfjspt_params.reward_normalization_method == "none":
             return raw_rewards
         
         elif dfjspt_params.reward_normalization_method == "ema":
@@ -696,6 +746,42 @@ class DfjsptMaEnv(MultiAgentEnv):
             preference_vector = np.array([1/3, 1/3, 1/3], dtype=np.float32)
         
         self.current_preference_vector = preference_vector
+    
+    def get_reward_normalizer_stats(self):
+        """
+        Get statistics from reward normalizer for monitoring and analysis.
+        
+        Returns:
+            Dict with statistics for each reward component, or None if normalizer not available
+        """
+        if self.reward_normalizer is not None:
+            return self.reward_normalizer.get_statistics_summary()
+        else:
+            # Return simple EMA stats
+            return {
+                'efficiency': {
+                    'ema_mean': self.reward_ema_mean[0],
+                    'ema_std': self.reward_ema_std[0],
+                },
+                'cost': {
+                    'ema_mean': self.reward_ema_mean[1],
+                    'ema_std': self.reward_ema_std[1],
+                },
+                'delivery': {
+                    'ema_mean': self.reward_ema_mean[2],
+                    'ema_std': self.reward_ema_std[2],
+                }
+            }
+    
+    def print_reward_normalizer_stats(self):
+        """Print reward normalization statistics."""
+        if self.reward_normalizer is not None:
+            self.reward_normalizer.print_statistics()
+        else:
+            print("\nReward Normalization Stats (Simple EMA):")
+            print(f"  Efficiency: mean={self.reward_ema_mean[0]:.4f}, std={self.reward_ema_std[0]:.4f}")
+            print(f"  Cost:       mean={self.reward_ema_mean[1]:.4f}, std={self.reward_ema_std[1]:.4f}")
+            print(f"  Delivery:   mean={self.reward_ema_mean[2]:.4f}, std={self.reward_ema_std[2]:.4f}")
 
     def step(self, action):
         observations, reward, terminated, truncated, info = {}, {}, {}, {}, {}

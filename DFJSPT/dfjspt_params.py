@@ -3,25 +3,25 @@
 as_test = False
 framework = "torch"
 local_mode = False
-use_tune = True  # Restored to True (use hierarchical_train_complete.py for Method 3)
+use_tune = True  
 use_custom_loss = True
 il_loss_weight = 10.0
-stop_iters = 10
+stop_iters = 50
 stop_timesteps = 100000000000
-stop_reward = 2
-num_workers = 1  # Reduced from 4 for debugging
-num_gpu = 0
-num_envs_per_worker = 1  # Reduced from 4 for debugging
+stop_reward = 5
+num_workers = 4
+num_gpu = 1
+num_envs_per_worker = 1
 
 
-max_n_jobs = 10
+max_n_jobs = 20
 n_jobs_is_fixed = True
-n_jobs = 10
+n_jobs = 20
 n_operations_is_n_machines = False
 min_n_operations = 5
 max_n_operations = 5
 consider_job_insert = False
-new_arrival_jobs = 3
+new_arrival_jobs = 5
 earliest_arrive_time = 30
 latest_arrive_time = 300
 
@@ -100,11 +100,20 @@ tardiness_penalty_factor = 2.0  # Penalty multiplier for late jobs
 use_potential_shaping = False  # Enable potential-based reward shaping
 potential_gamma = 0.99  # Discount factor for potential shaping
 
-# GNN encoder configuration (for future use)
+# GNN encoder configuration
 use_gnn_encoder = False  # Enable GNN encoder (requires PyTorch Geometric)
 gnn_hidden_dim = 128  # Hidden dimension for GNN
 gnn_num_layers = 3  # Number of GNN layers
-gnn_pooling = "mean"  # Pooling method: "mean", "max", "attention"
+gnn_type = "gat"  # GNN type: "gcn", "gat", "sage"
+gnn_pooling = "attention"  # Pooling method: "mean", "max", "attention"
+gnn_num_heads = 4  # Number of attention heads for GAT
+gnn_dropout = 0.1  # Dropout rate for GNN layers
+
+# Multi-objective reward normalization
+use_reward_normalization = True  # Enable dynamic reward normalization
+normalization_method = "ema"  # Normalization method: "standardize", "minmax", "ema"
+normalization_momentum = 0.99  # EMA momentum for normalization (higher = slower adaptation)
+normalization_epsilon = 1e-8  # Small constant for numerical stability
 
 
 

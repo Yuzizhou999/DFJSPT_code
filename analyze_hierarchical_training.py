@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 # Load training history
-result_dir = Path("DFJSPT/training_results/hierarchical_v3_20251016_135639")
+result_dir = Path("DFJSPT/training_results/hierarchical_v3_20251017_105957")
 history_file = result_dir / "complete_training_history.json"
 
 with open(history_file, 'r') as f:
