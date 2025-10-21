@@ -6,7 +6,7 @@ local_mode = False
 use_tune = True  
 use_custom_loss = True
 il_loss_weight = 10.0
-stop_iters = 50
+stop_iters = 100
 stop_timesteps = 100000000000
 stop_reward = 5
 num_workers = 4
@@ -101,9 +101,9 @@ use_potential_shaping = False  # Enable potential-based reward shaping
 potential_gamma = 0.99  # Discount factor for potential shaping
 
 # GNN encoder configuration
-use_gnn_encoder = False  # Enable GNN encoder (requires PyTorch Geometric)
+use_gnn_encoder = True  # Enable GNN encoder (requires PyTorch Geometric)
 gnn_hidden_dim = 128  # Hidden dimension for GNN
-gnn_num_layers = 3  # Number of GNN layers
+gnn_num_layers = 3  # Number of GNN layers (优化4: 保持3层捕获更深依赖)
 gnn_type = "gat"  # GNN type: "gcn", "gat", "sage"
 gnn_pooling = "attention"  # Pooling method: "mean", "max", "attention"
 gnn_num_heads = 4  # Number of attention heads for GAT
@@ -114,6 +114,12 @@ use_reward_normalization = True  # Enable dynamic reward normalization
 normalization_method = "ema"  # Normalization method: "standardize", "minmax", "ema"
 normalization_momentum = 0.99  # EMA momentum for normalization (higher = slower adaptation)
 normalization_epsilon = 1e-8  # Small constant for numerical stability
+
+# Centralized Critic (CTDE)
+use_centralized_critic = True  # Enable centralized critic for value estimation
+centralized_critic_hidden_dim = 256  # 优化2: 增加网络容量 (原: 128)
+centralized_critic_use_gnn = True  # Use GNN encoder in centralized critic (if use_gnn_encoder=True)
+centralized_critic_lr = 2e-4  # 优化3: 独立Critic学习率 (比policy lr更保守)
 
 
 
